@@ -28,6 +28,20 @@ def booking_decision(
     )
 
 
+def clarification_decision() -> PlannerDecision:
+    return PlannerDecision(
+        intent="clarification",
+        confidence=0.82,
+        small_talk_topic=None,
+        slots=PlannerSlots(
+            service=None,
+            date=None,
+            time=None,
+            escalation_reason=None,
+        ),
+    )
+
+
 def test_memory_carries_slots_across_an_incomplete_booking() -> None:
     planner_inputs: list[dict[str, str]] = []
     tool_calls: list[dict[str, str]] = []
@@ -108,6 +122,161 @@ def test_memory_carries_slots_across_an_incomplete_booking() -> None:
                 "Your haircut appointment is booked for tomorrow at 2 PM."
             ),
         },
+    ]
+
+
+def test_pending_booking_context_survives_clarification_follow_ups() -> None:
+    def plan(planner_input: dict[str, str]) -> PlannerDecision:
+        message = planner_input["user_message"]
+        if message == "I want to book Airbnb":
+            return booking_decision(service="Airbnb")
+        if message == "Help me book a flight":
+            return booking_decision(service="flight")
+        if message == "Book appointment for teeth cleaning":
+            return booking_decision(service="teeth cleaning")
+        return clarification_decision()
+
+    graph = build_memory_agent_graph()
+    context = AgentContext(
+        planner=RunnableLambda(plan),
+        business_profile=get_business_profile("dental"),
+    )
+    config = {"configurable": {"thread_id": "pending-booking-context"}}
+
+    graph.invoke(
+        {"user_message": "I want to book Airbnb"},
+        context=context,
+        config=config,
+    )
+    graph.invoke(
+        {"user_message": "Help me book a flight"},
+        context=context,
+        config=config,
+    )
+    service_result = graph.invoke(
+        {"user_message": "Book appointment for teeth cleaning"},
+        context=context,
+        config=config,
+    )
+    suggestion_result = graph.invoke(
+        {"user_message": "what do you suggest"},
+        context=context,
+        config=config,
+    )
+    recall_result = graph.invoke(
+        {"user_message": "What service was I looking for?"},
+        context=context,
+        config=config,
+    )
+
+    assert service_result["workflow_stage"] == "booking_information_required"
+    assert service_result["missing_booking_slots"] == ["date", "time"]
+    assert suggestion_result["detected_intent"] == "book_appointment"
+    assert suggestion_result["workflow_stage"] == "booking_information_required"
+    assert suggestion_result["missing_booking_slots"] == ["date", "time"]
+    assert suggestion_result["extracted_slots"] == {"service": "teeth cleaning"}
+    assert suggestion_result["final_response"] == (
+        "To book the appointment, please provide date and time."
+    )
+    assert recall_result["detected_intent"] == "clarification"
+    assert recall_result["workflow_stage"] == "planned"
+    assert recall_result["extracted_slots"] == {"service": "teeth cleaning"}
+    assert recall_result["final_response"] == (
+        "You were looking to book teeth cleaning."
+    )
+
+
+def test_unsupported_booking_request_does_not_become_pending_context() -> None:
+    decisions = iter(
+        [
+            booking_decision(service="flight"),
+            clarification_decision(),
+        ]
+    )
+    graph = build_memory_agent_graph()
+    context = AgentContext(
+        planner=RunnableLambda(lambda _: next(decisions)),
+        business_profile=get_business_profile("dental"),
+    )
+    config = {"configurable": {"thread_id": "unsupported-context"}}
+
+    graph.invoke(
+        {"user_message": "Help me book a flight"},
+        context=context,
+        config=config,
+    )
+    result = graph.invoke(
+        {"user_message": "What service was I looking for?"},
+        context=context,
+        config=config,
+    )
+
+    assert result["detected_intent"] == "clarification"
+    assert result["workflow_stage"] == "planned"
+    assert result["extracted_slots"] == {}
+    assert result["final_response"] == (
+        "Could you clarify whether you need business information, "
+        "appointment help, or a human specialist?"
+    )
+
+
+def test_slot_fragment_after_context_recall_uses_remembered_service() -> None:
+    decisions = iter(
+        [
+            booking_decision(service="teeth cleaning"),
+            clarification_decision(),
+            clarification_decision(),
+        ]
+    )
+    tool_calls: list[dict[str, str]] = []
+
+    @tool("record_context_recall_booking", args_schema=BookingRequest)
+    def record_context_recall_booking(
+        service: str,
+        date: str,
+        time: str,
+    ) -> dict[str, str]:
+        """Record a booking after a context recall turn."""
+        tool_calls.append({"service": service, "date": date, "time": time})
+        return {
+            "status": "confirmed",
+            "service": service,
+            "date": date,
+            "time": time,
+        }
+
+    graph = build_memory_agent_graph()
+    context = AgentContext(
+        planner=RunnableLambda(lambda _: next(decisions)),
+        business_profile=get_business_profile("dental"),
+        booking_tool=record_context_recall_booking,
+    )
+    config = {"configurable": {"thread_id": "context-recall-slot-fragment"}}
+
+    graph.invoke(
+        {"user_message": "Book appointment for teeth cleaning"},
+        context=context,
+        config=config,
+    )
+    graph.invoke(
+        {"user_message": "What service was I looking for?"},
+        context=context,
+        config=config,
+    )
+    result = graph.invoke(
+        {"user_message": "Monday at 2 PM"},
+        context=context,
+        config=config,
+    )
+
+    assert result["workflow_stage"] == "appointment_booked"
+    assert result["extracted_slots"] == {
+        "service": "dental cleaning",
+        "date": "Monday",
+        "time": "2 PM",
+    }
+    assert tool_calls == [
+        {"service": "dental cleaning", "date": "Monday", "time": "2 PM"}
     ]
 
 

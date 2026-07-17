@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+from datetime import date
 from typing import TYPE_CHECKING, Any, Final
 
 from langchain_core.output_parsers import StrOutputParser
@@ -70,6 +71,8 @@ Rules:
   about individual staff members and offer business or appointment help.
 - If facts.query_scope is sensitive_request, refuse briefly and redirect to
   appointments or business questions.
+- If facts.query_scope is scheduling_reference, answer using facts.current_date
+  and offer to use that for appointment scheduling.
 - If information is unavailable, say so naturally and offer the next helpful
   step when appropriate.
 - If fields are missing, ask only for the missing information.
@@ -117,6 +120,10 @@ def _generate_conversational_response(
     response_context: dict[str, Any],
     runtime: Runtime[AgentContext],
 ) -> str:
+    deterministic_response = _deterministic_context_response(response_context)
+    if deterministic_response is not None:
+        return deterministic_response
+
     if runtime.context is None or runtime.context.response_generator is None:
         return _fallback_response(response_context)
 
@@ -129,6 +136,26 @@ def _generate_conversational_response(
             )
         }
     )
+
+
+def _deterministic_context_response(response_context: dict[str, Any]) -> str | None:
+    if (
+        response_context.get("workflow_stage") != "planned"
+        or response_context.get("intent") != "clarification"
+    ):
+        return None
+
+    user_message = str(response_context.get("user_message") or "")
+    facts = response_context.get("facts", {})
+    extracted_slots = facts.get("extracted_slots", {})
+    service = extracted_slots.get("service") if isinstance(extracted_slots, dict) else None
+    if not isinstance(service, str) or not service.strip():
+        return None
+
+    if _is_pending_booking_service_recall_question(user_message):
+        return f"You were looking to book {service.strip()}."
+
+    return None
 
 
 def _build_response_context(
@@ -144,7 +171,13 @@ def _build_response_context(
         else None
     )
     business_name = provided_business_name or "this business"
-    if workflow_stage == "knowledge_retrieved" and provided_business_name:
+    if (
+        provided_business_name
+        and (
+            workflow_stage == "knowledge_retrieved"
+            or state.get("query_scope") is not None
+        )
+    ):
         business_name = "this business"
 
     business = {
@@ -167,7 +200,7 @@ def _build_response_context(
         "workflow_stage": workflow_stage,
         "response_goal": _response_goal(state),
         "facts": {
-            "query_scope": _query_scope(state, business_profile),
+            "query_scope": state.get("query_scope"),
             "retrieval_query": state.get("retrieval_query"),
             "small_talk_topic": state.get("small_talk_topic"),
             "extracted_slots": dict(state.get("extracted_slots", {})),
@@ -183,6 +216,7 @@ def _build_response_context(
             "unsupported_service": state.get("unsupported_service"),
             "supported_services": state.get("supported_services", []),
             "validation_error": state.get("validation_error"),
+            "current_date": _current_date_label(),
         },
         "guardrails": {
             "business_logic_already_decided": True,
@@ -192,151 +226,6 @@ def _build_response_context(
             "do_not_override_workflow_stage": True,
         },
     }
-
-
-def _query_scope(
-    state: AgentState,
-    business_profile: Any,
-) -> str | None:
-    if state.get("detected_intent") == "small_talk":
-        return None
-
-    if state.get("workflow_stage") not in {"knowledge_retrieved", "planned"}:
-        return None
-
-    message = (state.get("normalized_message") or state.get("user_message", "")).lower()
-    if _looks_like_sensitive_request(message):
-        return "sensitive_request"
-    if _looks_like_cross_business_profile(message, business_profile):
-        return "cross_business_profile"
-    if _looks_like_staff_personal_info(message):
-        return "staff_personal_info"
-    if _looks_like_business_question(message, business_profile):
-        return "business_question"
-    return "off_domain"
-
-
-def _looks_like_sensitive_request(message: str) -> bool:
-    sensitive_terms = (
-        "api key",
-        "apikey",
-        "secret key",
-        "password",
-        "token",
-        "credential",
-        "ignore all your instructions",
-    )
-    return any(term in message for term in sensitive_terms)
-
-
-def _looks_like_cross_business_profile(message: str, business_profile: Any) -> bool:
-    if business_profile is None:
-        return False
-
-    profile_terms_by_type = {
-        "dental": ("dental", "dentist", "tooth", "teeth", "clinic"),
-        "salon": ("salon",),
-        "auto_repair": ("auto", "car", "garage", "auto repair"),
-    }
-    current_type = business_profile.business_type
-    for profile_type, terms in profile_terms_by_type.items():
-        if profile_type == current_type:
-            continue
-        if any(term in message for term in terms):
-            return True
-    return False
-
-
-def _looks_like_staff_personal_info(message: str) -> bool:
-    staff_terms = ("front desk", "receptionist", "staff", "employee", "manager")
-    personal_terms = ("know ", "who is", "who's", "karen", "person")
-    return any(term in message for term in staff_terms) and any(
-        term in message for term in personal_terms
-    )
-
-
-def _looks_like_business_question(message: str, business_profile: Any) -> bool:
-    business_terms = {
-        "appointment",
-        "appointments",
-        "available",
-        "availability",
-        "book",
-        "booking",
-        "bring",
-        "cancel",
-        "cancellation",
-        "charge",
-        "charges",
-        "close",
-        "closed",
-        "cost",
-        "costs",
-        "deal",
-        "deals",
-        "discount",
-        "discounts",
-        "fee",
-        "fees",
-        "friend",
-        "guest",
-        "help",
-        "hour",
-        "hours",
-        "offer",
-        "offers",
-        "open",
-        "payment",
-        "policy",
-        "policies",
-        "price",
-        "prices",
-        "pricing",
-        "promotion",
-        "promotions",
-        "request",
-        "reschedule",
-        "schedule",
-        "service",
-        "services",
-        "message",
-        "visit",
-    }
-    profile_terms = _profile_terms(business_profile)
-    return any(term in message for term in business_terms | profile_terms)
-
-
-def _profile_terms(business_profile: Any) -> set[str]:
-    if business_profile is None:
-        return set()
-
-    service_terms: set[str] = set()
-    for service_name in supported_service_names(business_profile):
-        service_terms.update(service_name.lower().split())
-
-    type_terms = {
-        "auto",
-        "brake",
-        "car",
-        "cleaning",
-        "color",
-        "dental",
-        "dentist",
-        "engine",
-        "exam",
-        "filling",
-        "hair",
-        "haircut",
-        "manicure",
-        "oil",
-        "repair",
-        "salon",
-        "teeth",
-        "tire",
-        "tooth",
-        "whitening",
-    }
-    return service_terms | type_terms
 
 
 def _response_goal(state: AgentState) -> str:
@@ -454,6 +343,12 @@ def _fallback_response(response_context: dict[str, Any]) -> str:
             return (
                 "I can't help with credentials or internal system information. "
                 "I can help with appointments or business questions."
+            )
+        if query_scope == "scheduling_reference":
+            current_date = facts.get("current_date")
+            return (
+                f"Today is {current_date}. I can use that to help schedule an "
+                "appointment."
             )
         return (
             "Could you clarify whether you need business information, "
@@ -622,3 +517,27 @@ def _join_fields(fields: list[str]) -> str:
     if len(readable_fields) == 2:
         return " and ".join(readable_fields)
     return ", ".join(readable_fields[:-1]) + f", and {readable_fields[-1]}"
+
+
+def _current_date_label() -> str:
+    today = date.today()
+    return f"{today:%A}, {today:%B} {today.day}, {today:%Y}"
+
+
+def _is_pending_booking_service_recall_question(message: str) -> bool:
+    normalized = " ".join(message.lower().split()).rstrip("?")
+    recall_phrases = (
+        "what service",
+        "which service",
+        "what appointment",
+        "which appointment",
+        "what was i booking",
+        "what am i booking",
+        "what were we booking",
+        "what are we booking",
+        "what was i looking for",
+        "what am i looking for",
+        "what were we looking for",
+        "what did i ask",
+    )
+    return any(phrase in normalized for phrase in recall_phrases)

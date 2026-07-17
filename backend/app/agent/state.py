@@ -9,6 +9,14 @@ SmallTalkTopic = Literal[
     "capabilities",
     "courtesy",
 ]
+QueryScope = Literal[
+    "business_question",
+    "scheduling_reference",
+    "off_domain",
+    "cross_business_profile",
+    "staff_personal_info",
+    "sensitive_request",
+]
 PlannerIntent = Literal[
     "small_talk",
     "rag",
@@ -111,6 +119,7 @@ class AgentState(TypedDict):
     planner_confidence: NotRequired[float]
     extracted_slots: NotRequired[ExtractedSlots]
     small_talk_topic: NotRequired[SmallTalkTopic | None]
+    query_scope: NotRequired[QueryScope | None]
     final_response: NotRequired[str | None]
     retrieval_query: NotRequired[str | None]
     retrieved_documents: NotRequired[list[RetrievedDocument]]
@@ -139,6 +148,7 @@ class AgentStateUpdate(TypedDict, total=False):
     planner_confidence: float
     extracted_slots: ExtractedSlots
     small_talk_topic: SmallTalkTopic | None
+    query_scope: QueryScope | None
     final_response: str | None
     retrieval_query: str | None
     retrieved_documents: list[RetrievedDocument]

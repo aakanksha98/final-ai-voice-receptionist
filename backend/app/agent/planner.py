@@ -75,8 +75,14 @@ Choose exactly one route:
 - reschedule_appointment: move an existing appointment.
 - human_escalation: the user explicitly asks for a person or human handoff,
   or says they are dissatisfied, unhappy, want to complain, or the resolution
-  was not acceptable.
+  was not acceptable for this selected business or its appointment workflow.
 - clarification: the request is unclear or no single route can be selected.
+
+Do not choose human_escalation for unrelated technical support, family,
+personal, general-knowledge, or outside-business problems, even if the user
+uses words like issue, problem, help, support, or setup. Those are clarification
+unless they directly concern the selected business profile or the user explicitly
+asks for a human without adding an unrelated topic.
 
 For small_talk, set small_talk_topic to greeting, assistant_identity,
 capabilities, or courtesy. For every other route, set small_talk_topic to null.

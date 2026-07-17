@@ -36,6 +36,8 @@ def route_planned_intent(state: AgentState) -> PlannedRouteDecision:
         return "small_talk"
 
     if detected_intent == "rag":
+        if state.get("query_scope") not in {None, "business_question"}:
+            return "deferred"
         return "rag"
 
     if detected_intent == "book_appointment":

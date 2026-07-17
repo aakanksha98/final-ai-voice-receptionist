@@ -167,6 +167,17 @@ def match_supported_service(
     return None
 
 
+def match_known_service(
+    requested_service: str,
+) -> tuple[BusinessType, str] | None:
+    for profile in BUSINESS_PROFILES.values():
+        matched_service = match_supported_service(profile, requested_service)
+        if matched_service is not None:
+            return profile.business_type, matched_service
+
+    return None
+
+
 def _normalize_service(value: str) -> str:
     cleaned = sub(r"[^a-z0-9]+", " ", value.lower())
     return sub(r"\s+", " ", cleaned).strip()

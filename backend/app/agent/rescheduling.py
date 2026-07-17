@@ -10,6 +10,7 @@ from backend.app.agent.state import (
     RescheduleResult,
     RescheduleSlot,
 )
+from backend.app.agent.booking import validate_appointment_schedule
 from backend.app.tools.rescheduling import (
     RescheduleConfirmation,
     RescheduleRequest,
@@ -49,6 +50,20 @@ def execute_reschedule(
             "workflow_stage": "reschedule_information_required",
             "missing_reschedule_slots": missing_slots,
             "reschedule_result": None,
+        }
+
+    schedule_violation = validate_appointment_schedule(
+        runtime.context.business_profile,
+        _clean_slot_value(extracted_slots.get("date")),
+        _clean_slot_value(extracted_slots.get("time")),
+    )
+    if schedule_violation is not None:
+        return {
+            "workflow_stage": "appointment_outside_business_hours",
+            "missing_reschedule_slots": [],
+            "reschedule_result": None,
+            "schedule_violation": schedule_violation,
+            "business_hours": runtime.context.business_profile.booking_hours.description,
         }
 
     if runtime.context.reschedule_tool is None:

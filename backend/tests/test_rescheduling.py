@@ -187,6 +187,88 @@ def test_missing_reschedule_slots_skip_tool_invocation() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    ("date_value", "time_value", "expected_violation"),
+    [
+        (
+            "yesterday",
+            "7 PM",
+            (
+                "yesterday is in the past. Please choose a future date. "
+                "7 PM is outside business hours. Available booking hours are "
+                "Monday through Friday from 8 AM to 5 PM, and Saturday from 9 AM to 1 PM."
+            ),
+        ),
+        (
+            "February 30, 2027",
+            "2 PM",
+            (
+                "I could not validate February 30, 2027 as a real appointment "
+                "date. Please choose a valid future date."
+            ),
+        ),
+        (
+            "Monday",
+            "7",
+            (
+                "I could not validate 7 as an appointment time. "
+                "Please provide a specific time, such as 2 PM."
+            ),
+        ),
+        (
+            "next available day",
+            "19:00",
+            (
+                "I could not validate next available day as a specific appointment "
+                "date. Please choose a specific future date. "
+                "19:00 is outside business hours. Available booking hours are "
+                "Monday through Friday from 8 AM to 5 PM, and Saturday from 9 AM to 1 PM."
+            ),
+        ),
+        (
+            "someday",
+            "2 PM",
+            (
+                "I could not validate someday as a specific appointment date. "
+                "Please choose a specific future date. Available booking hours "
+                "are Monday through Friday from 8 AM to 5 PM, and Saturday from 9 AM to 1 PM."
+            ),
+        ),
+    ],
+)
+def test_invalid_reschedule_dates_and_times_skip_tool_invocation(
+    date_value: str,
+    time_value: str,
+    expected_violation: str,
+) -> None:
+    tool_calls: list[dict[str, str]] = []
+    context = AgentContext(
+        planner=RunnableLambda(
+            lambda _: reschedule_decision(date=date_value, time=time_value)
+        ),
+        reschedule_tool=create_recording_reschedule_tool(tool_calls),
+    )
+
+    result = agent_graph.invoke(
+        {
+            "user_message": f"Move my appointment to {date_value} at {time_value}",
+            "active_appointment": {
+                "service": "dental cleaning",
+                "date": "tomorrow",
+                "time": "2 PM",
+                "status": "confirmed",
+            },
+        },
+        context=context,
+    )
+
+    assert tool_calls == []
+    assert result["workflow_stage"] == "appointment_outside_business_hours"
+    assert result["missing_reschedule_slots"] == []
+    assert result["reschedule_result"] is None
+    assert result["schedule_violation"] == expected_violation
+
+
 def test_reschedule_node_rejects_invalid_tool_result() -> None:
     context = AgentContext(
         planner=RunnableLambda(lambda _: reschedule_decision()),

@@ -3,6 +3,7 @@ const messageInput = document.querySelector("[data-message-input]");
 const sendButton = document.querySelector("[data-send]");
 const characterCount = document.querySelector("[data-character-count]");
 const conversationLog = document.querySelector("#conversation-log");
+const conversationEnd = document.querySelector("[data-conversation-end]");
 const sessionStatus = document.querySelector("[data-session-status]");
 const sessionChannel = document.querySelector("[data-session-channel]");
 const sessionBusiness = document.querySelector("[data-session-business]");
@@ -21,20 +22,63 @@ const contextBusiness = document.querySelector("[data-context-business]");
 const contextService = document.querySelector("[data-context-service]");
 const contextAppointment = document.querySelector("[data-context-appointment]");
 const initialAssistantText = document.querySelector("[data-initial-assistant-text]");
+const railStatus = document.querySelector("[data-rail-status]");
+const railBusiness = document.querySelector("[data-rail-business]");
+const railProfileType = document.querySelector("[data-rail-profile-type]");
+const railProfileState = document.querySelector("[data-rail-profile-state]");
+const railIntent = document.querySelector("[data-rail-intent]");
+const railChannel = document.querySelector("[data-rail-channel]");
+const railValidation = document.querySelector("[data-rail-validation]");
+const railService = document.querySelector("[data-rail-service]");
+const railAppointment = document.querySelector("[data-rail-appointment]");
+const railServices = document.querySelector("[data-rail-services]");
 
 const MAX_MESSAGE_LENGTH = Number(messageInput.maxLength);
+const RESPONSE_PROGRESS_STEPS = [
+  {
+    title: "Reading conversation context",
+    detail: "Checking recent messages and remembered appointment details.",
+  },
+  {
+    title: "Checking business profile",
+    detail: "Using the selected demo business and supported services.",
+  },
+  {
+    title: "Reviewing appointment rules",
+    detail: "Looking at services, dates, times, and handoff context.",
+  },
+  {
+    title: "Preparing Aster's reply",
+    detail: "Turning the result into a concise reception response.",
+  },
+];
 const BUSINESS_PROFILES = {
   dental: {
     label: "Dental Clinic",
     exampleName: "BrightSmile Dental",
+    services: [
+      "dental cleaning",
+      "dental exam",
+      "teeth whitening",
+      "filling",
+      "emergency dental visit",
+    ],
   },
   salon: {
     label: "Salon",
     exampleName: "Luxe Hair Studio",
+    services: ["haircut", "blowout", "hair color", "manicure", "facial"],
   },
   auto_repair: {
     label: "Auto Repair Shop",
     exampleName: "TurboFix Garage",
+    services: [
+      "oil change",
+      "brake inspection",
+      "tire rotation",
+      "battery diagnostic",
+      "engine diagnostic",
+    ],
   },
 };
 const SpeechRecognitionConstructor =
@@ -55,6 +99,9 @@ let requestGeneration = 0;
 let sessionId = createSessionId();
 let activeBusinessType = "";
 let activeBusinessName = "";
+let responseProgressMessage = null;
+let responseProgressTimer = null;
+let responseProgressStepIndex = 0;
 
 const supportsSpeechSynthesis =
   typeof window.speechSynthesis !== "undefined" &&
@@ -63,6 +110,29 @@ const supportsSpeechSynthesis =
 function resizeMessageInput() {
   messageInput.style.height = "auto";
   messageInput.style.height = `${Math.min(messageInput.scrollHeight, 144)}px`;
+}
+
+function appendConversationMessage(messageElement) {
+  if (conversationEnd) {
+    conversationLog.insertBefore(messageElement, conversationEnd);
+    return;
+  }
+
+  conversationLog.append(messageElement);
+}
+
+function scrollConversationToEnd(behavior = "smooth") {
+  const scrollToBottom = (scrollBehavior = behavior) => {
+    conversationLog.scrollTo({
+      top: conversationLog.scrollHeight,
+      behavior: scrollBehavior,
+    });
+  };
+
+  requestAnimationFrame(() => {
+    scrollToBottom();
+    requestAnimationFrame(() => scrollToBottom("auto"));
+  });
 }
 
 function updateComposerState() {
@@ -149,6 +219,30 @@ function cleanBusinessName(value) {
   return cleaned.slice(0, 80);
 }
 
+function setText(element, value) {
+  if (element) {
+    element.textContent = value;
+  }
+}
+
+function renderServiceMenu() {
+  if (!railServices) {
+    return;
+  }
+
+  const services = BUSINESS_PROFILES[activeBusinessType]?.services || [
+    "Select a business type",
+  ];
+
+  railServices.replaceChildren(
+    ...services.map((service) => {
+      const item = document.createElement("li");
+      item.textContent = service;
+      return item;
+    }),
+  );
+}
+
 function profileSummary() {
   const profile = BUSINESS_PROFILES[activeBusinessType];
   if (!profile || !activeBusinessName) {
@@ -156,6 +250,52 @@ function profileSummary() {
   }
 
   return `${activeBusinessName} (${profile.label})`;
+}
+
+function appointmentSummary(appointment) {
+  return `${appointment.date} at ${appointment.time} (${formatIntent(appointment.status)})`;
+}
+
+function slotAppointmentSummary(slots = {}) {
+  const date = slots.date || "";
+  const time = slots.time || "";
+
+  if (date && time) {
+    return `${date} at ${time}`;
+  }
+
+  return date || time || "No details";
+}
+
+function missingFieldsSummary(missingFields) {
+  if (!Array.isArray(missingFields) || missingFields.length === 0) {
+    return "";
+  }
+
+  return `Missing ${missingFields.map(formatIntent).join(", ")}.`;
+}
+
+function railNextStep(response = null) {
+  if (!isProfileReady) {
+    return "Select a profile to begin.";
+  }
+
+  if (!response) {
+    return "Ready for customer messages.";
+  }
+
+  if (response.active_appointment) {
+    return `${formatIntent(response.active_appointment.status)} appointment captured.`;
+  }
+
+  const missingFields = missingFieldsSummary(response.missing_fields);
+  if (missingFields) {
+    return missingFields;
+  }
+
+  return response.workflow_stage
+    ? formatIntent(response.workflow_stage)
+    : "Response ready.";
 }
 
 function greetingForActiveProfile() {
@@ -173,13 +313,24 @@ function updateProfileDisplay() {
     sessionBusiness.textContent = "Not selected";
     contextBusiness.textContent = "Not selected";
     initialAssistantText.textContent = "Choose a demo business profile to begin.";
+    setText(railBusiness, "Not selected");
+    setText(railProfileType, "Choose a demo profile");
+    setText(railProfileState, "Setup");
+    setText(railValidation, railNextStep());
+    renderServiceMenu();
     return;
   }
 
+  const profile = BUSINESS_PROFILES[activeBusinessType];
   const summary = profileSummary();
   sessionBusiness.textContent = activeBusinessName;
   contextBusiness.textContent = summary;
   initialAssistantText.textContent = greetingForActiveProfile();
+  setText(railBusiness, activeBusinessName);
+  setText(railProfileType, profile?.label || "Business profile");
+  setText(railProfileState, "Active");
+  setText(railValidation, railNextStep());
+  renderServiceMenu();
 }
 
 function createUserMessage(message) {
@@ -241,6 +392,117 @@ function createAssistantMessage(message, isError = false) {
   return article;
 }
 
+function createResponseProgressMessage() {
+  const article = document.createElement("article");
+  const avatar = document.createElement("span");
+  const content = document.createElement("div");
+  const metadata = document.createElement("div");
+  const author = document.createElement("strong");
+  const time = document.createElement("time");
+  const bubble = document.createElement("div");
+  const progress = document.createElement("div");
+  const statusRow = document.createElement("div");
+  const dots = document.createElement("span");
+  const copy = document.createElement("div");
+  const title = document.createElement("strong");
+  const detail = document.createElement("p");
+  const steps = document.createElement("ol");
+
+  article.className = "message message--assistant message--progress";
+  article.dataset.dynamicMessage = "true";
+  article.dataset.progressMessage = "true";
+  avatar.className = "agent-avatar message__avatar";
+  avatar.setAttribute("aria-hidden", "true");
+  avatar.textContent = "AI";
+  content.className = "message__content";
+  metadata.className = "message__meta";
+  bubble.className = "message__bubble";
+  progress.className = "response-progress";
+  progress.setAttribute("role", "status");
+  progress.setAttribute("aria-live", "polite");
+  statusRow.className = "response-progress__status";
+  dots.className = "response-progress__dots";
+  dots.setAttribute("aria-hidden", "true");
+  copy.className = "response-progress__copy";
+  title.className = "response-progress__title";
+  title.dataset.progressTitle = "true";
+  detail.className = "response-progress__detail";
+  detail.dataset.progressDetail = "true";
+  steps.className = "response-progress__steps";
+  steps.setAttribute("aria-label", "Response progress");
+  author.textContent = "Aster";
+  time.textContent = formatCurrentTime();
+
+  for (let index = 0; index < 3; index += 1) {
+    dots.append(document.createElement("span"));
+  }
+
+  RESPONSE_PROGRESS_STEPS.forEach((step, index) => {
+    const item = document.createElement("li");
+    item.textContent = step.title;
+    item.dataset.progressStep = String(index);
+    steps.append(item);
+  });
+
+  copy.append(title, detail);
+  statusRow.append(dots, copy);
+  progress.append(statusRow, steps);
+  metadata.append(author, time);
+  bubble.append(progress);
+  content.append(metadata, bubble);
+  article.append(avatar, content);
+
+  return article;
+}
+
+function updateResponseProgressStep(index) {
+  if (!responseProgressMessage) {
+    return;
+  }
+
+  const safeIndex = Math.min(index, RESPONSE_PROGRESS_STEPS.length - 1);
+  const step = RESPONSE_PROGRESS_STEPS[safeIndex];
+  const title = responseProgressMessage.querySelector("[data-progress-title]");
+  const detail = responseProgressMessage.querySelector("[data-progress-detail]");
+
+  setText(title, step.title);
+  setText(detail, step.detail);
+  responseProgressMessage
+    .querySelectorAll("[data-progress-step]")
+    .forEach((item, itemIndex) => {
+      item.classList.toggle("is-active", itemIndex === safeIndex);
+      item.classList.toggle("is-complete", itemIndex < safeIndex);
+    });
+}
+
+function showResponseProgress() {
+  clearResponseProgress();
+
+  responseProgressStepIndex = 0;
+  responseProgressMessage = createResponseProgressMessage();
+  appendConversationMessage(responseProgressMessage);
+  updateResponseProgressStep(responseProgressStepIndex);
+  responseProgressTimer = window.setInterval(() => {
+    responseProgressStepIndex = Math.min(
+      responseProgressStepIndex + 1,
+      RESPONSE_PROGRESS_STEPS.length - 1,
+    );
+    updateResponseProgressStep(responseProgressStepIndex);
+  }, 850);
+  scrollConversationToEnd();
+}
+
+function clearResponseProgress() {
+  if (responseProgressTimer !== null) {
+    window.clearInterval(responseProgressTimer);
+    responseProgressTimer = null;
+  }
+
+  responseProgressMessage?.remove();
+  responseProgressMessage = null;
+  responseProgressStepIndex = 0;
+}
+
 function createSessionId() {
   if (typeof window.crypto?.randomUUID === "function") {
     return window.crypto.randomUUID();
@@ -269,13 +531,23 @@ function updateCollectedContext(response) {
 
   if (response.slots?.service) {
     contextService.textContent = response.slots.service;
+    setText(railService, response.slots.service);
+  }
+
+  const slotAppointment = slotAppointmentSummary(response.slots);
+  if (slotAppointment !== "No details") {
+    setText(railAppointment, slotAppointment);
   }
 
   if (response.active_appointment) {
     const appointment = response.active_appointment;
     contextService.textContent = appointment.service;
-    contextAppointment.textContent = `${appointment.date} at ${appointment.time} (${formatIntent(appointment.status)})`;
+    contextAppointment.textContent = appointmentSummary(appointment);
+    setText(railService, appointment.service);
+    setText(railAppointment, appointmentSummary(appointment));
   }
+
+  setText(railValidation, railNextStep(response));
 }
 
 async function submitMessage() {
@@ -293,15 +565,19 @@ async function submitMessage() {
 
   const activeGeneration = ++requestGeneration;
   const activeSessionId = sessionId;
-  conversationLog.append(createUserMessage(message));
+  appendConversationMessage(createUserMessage(message));
   messageInput.value = "";
   isSubmitting = true;
   sessionStatus.textContent = "Processing";
   sessionIntent.textContent = "Awaiting classification";
+  setText(railStatus, "Processing");
+  setText(railIntent, "Awaiting classification");
+  setText(railValidation, "Waiting for assistant response.");
   announcement.textContent = "Request sent to the assistant.";
   updateComposerState();
   updateQuickActionState();
-  conversationLog.scrollTo({ top: conversationLog.scrollHeight, behavior: "smooth" });
+  showResponseProgress();
+  scrollConversationToEnd();
 
   try {
     const response = await fetch("/api/v1/conversation", {
@@ -324,9 +600,12 @@ async function submitMessage() {
       return;
     }
 
-    conversationLog.append(createAssistantMessage(payload.response));
+    clearResponseProgress();
+    appendConversationMessage(createAssistantMessage(payload.response));
     sessionStatus.textContent = "Response ready";
     sessionIntent.textContent = formatIntent(payload.intent);
+    setText(railStatus, "Response ready");
+    setText(railIntent, formatIntent(payload.intent));
     updateCollectedContext(payload);
     announcement.textContent = "Assistant response received.";
   } catch {
@@ -334,7 +613,8 @@ async function submitMessage() {
       return;
     }
 
-    conversationLog.append(
+    clearResponseProgress();
+    appendConversationMessage(
       createAssistantMessage(
         "I'm sorry, the assistant is temporarily unavailable. Please try again.",
         true,
@@ -342,6 +622,9 @@ async function submitMessage() {
     );
     sessionStatus.textContent = "Service unavailable";
     sessionIntent.textContent = "Not identified";
+    setText(railStatus, "Service unavailable");
+    setText(railIntent, "Not identified");
+    setText(railValidation, "Try again when the assistant is available.");
     announcement.textContent = "The assistant could not complete the request.";
   } finally {
     if (activeGeneration === requestGeneration) {
@@ -349,10 +632,7 @@ async function submitMessage() {
       updateComposerState();
       updateVoiceControls();
       updateQuickActionState();
-      conversationLog.scrollTo({
-        top: conversationLog.scrollHeight,
-        behavior: "smooth",
-      });
+      scrollConversationToEnd();
       messageInput.focus();
     }
   }
@@ -387,6 +667,7 @@ function cancelVoiceActivity() {
 
 function resetConversation({ announce = true } = {}) {
   cancelVoiceActivity();
+  clearResponseProgress();
   requestGeneration += 1;
   isSubmitting = false;
   sessionId = createSessionId();
@@ -399,6 +680,12 @@ function resetConversation({ announce = true } = {}) {
   sessionIntent.textContent = "Not identified";
   contextService.textContent = "Not selected";
   contextAppointment.textContent = "No details";
+  setText(railStatus, isProfileReady ? "Ready" : "Setup required");
+  setText(railChannel, "Text");
+  setText(railIntent, "Not identified");
+  setText(railService, "Not selected");
+  setText(railAppointment, "No details");
+  setText(railValidation, railNextStep());
   updateProfileDisplay();
   announcement.textContent = announce
     ? "Conversation reset."
@@ -501,6 +788,7 @@ function configureSpeechRecognition() {
     recognitionErrorMessage = "";
     setListeningState(true);
     sessionChannel.textContent = "Voice";
+    setText(railChannel, "Voice");
     setVoiceStatus("Listening", true);
     announcement.textContent = "Voice input started.";
   });
@@ -562,6 +850,7 @@ function configureSpeechRecognition() {
 
     if (currentTranscript) {
       sessionChannel.textContent = "Voice + text";
+      setText(railChannel, "Voice + text");
       setVoiceStatus("Transcript ready");
       announcement.textContent = "Voice transcript ready for review.";
       messageInput.focus();
@@ -708,6 +997,7 @@ quickActionButtons.forEach((button) => {
     cancelVoiceActivity();
     messageInput.value = button.dataset.prompt;
     sessionChannel.textContent = "Text";
+    setText(railChannel, "Text");
     updateComposerState();
     messageInput.focus();
   });

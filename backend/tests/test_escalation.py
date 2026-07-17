@@ -108,6 +108,60 @@ def test_escalation_without_reason_still_queues_handoff() -> None:
     assert result["escalation_result"]["status"] == "queued"
 
 
+@pytest.mark.parametrize(
+    "message",
+    [
+        "Cool! I need some help regarding an issue with my grand kid",
+        "I am facing issue with my keyboard and mouse setup",
+        "I'm unhappy with my keyboard setup",
+        "My laptop is not working, can I speak to someone?",
+        "I need help with my internet router problem",
+    ],
+)
+def test_off_domain_support_issues_do_not_create_human_escalations(
+    message: str,
+) -> None:
+    tool_calls: list[dict[str, str | None]] = []
+    context = AgentContext(
+        planner=RunnableLambda(lambda _: escalation_decision(message)),
+        escalation_tool=create_recording_escalation_tool(tool_calls),
+    )
+
+    result = agent_graph.invoke(
+        {"user_message": message},
+        context=context,
+    )
+
+    assert tool_calls == []
+    assert result["detected_intent"] == "clarification"
+    assert result["workflow_stage"] == "planned"
+    assert result["query_scope"] == "off_domain"
+    assert result.get("escalation_result") is None
+    assert result["final_response"] == (
+        "I'm here to help with this business profile's services, "
+        "policies, hours, pricing, and appointments."
+    )
+
+
+def test_business_related_issue_can_still_escalate_to_human() -> None:
+    tool_calls: list[dict[str, str | None]] = []
+    message = "I have an issue with my dental cleaning and need a person"
+    context = AgentContext(
+        planner=RunnableLambda(lambda _: escalation_decision(message)),
+        escalation_tool=create_recording_escalation_tool(tool_calls),
+    )
+
+    result = agent_graph.invoke(
+        {"user_message": message},
+        context=context,
+    )
+
+    assert tool_calls == [{"reason": message}]
+    assert result["detected_intent"] == "human_escalation"
+    assert result["workflow_stage"] == "human_escalation_queued"
+    assert result["query_scope"] == "business_question"
+
+
 def test_escalation_route_runs_after_planning() -> None:
     context = AgentContext(
         planner=RunnableLambda(lambda _: escalation_decision()),

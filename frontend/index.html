@@ -8,7 +8,7 @@
       content="Enterprise Voice AI Agent reception workspace"
     >
     <title>Enterprise Voice AI Agent</title>
-    <link rel="stylesheet" href="styles.css">
+    <link rel="stylesheet" href="styles.css?v=20260717-progress-1">
   </head>
   <body>
     <a class="skip-link" href="#conversation-log">Skip to conversation</a>
@@ -45,6 +45,7 @@
           <div class="session-panel__header">
             <p class="eyebrow">Workspace</p>
             <h2 id="session-title">Session</h2>
+            <p class="session-panel__subtitle">Profile, channel, and capture state</p>
           </div>
 
           <form class="profile-form" data-profile-form>
@@ -124,12 +125,18 @@
               <h1 id="conversation-title">Reception desk</h1>
             </div>
 
-            <div class="agent-identity" aria-label="Assistant identity">
-              <span class="agent-avatar" aria-hidden="true">AI</span>
-              <span>
-                <strong>Aster</strong>
-                <small>Service assistant</small>
-              </span>
+            <div class="conversation-header__meta">
+              <div class="signal-chip">
+                <span class="status-dot" aria-hidden="true"></span>
+                <span data-rail-status>Setup required</span>
+              </div>
+              <div class="agent-identity" aria-label="Assistant identity">
+                <span class="agent-avatar" aria-hidden="true">AI</span>
+                <span>
+                  <strong>Aster</strong>
+                  <small>Service assistant</small>
+                </span>
+              </div>
             </div>
           </header>
 
@@ -155,21 +162,30 @@
                 </div>
               </div>
             </article>
+            <div
+              class="conversation-log__end"
+              aria-hidden="true"
+              data-conversation-end
+            ></div>
           </div>
 
           <section class="quick-actions" aria-labelledby="quick-actions-title">
             <h2 id="quick-actions-title">Common requests</h2>
             <div class="quick-actions__grid">
               <button type="button" data-prompt="I would like to book an appointment." disabled>
+                <span class="quick-actions__icon" aria-hidden="true">+</span>
                 Book appointment
               </button>
               <button type="button" data-prompt="What services and pricing do you offer?" disabled>
+                <span class="quick-actions__icon" aria-hidden="true">$</span>
                 Services and pricing
               </button>
               <button type="button" data-prompt="What is your cancellation policy?" disabled>
+                <span class="quick-actions__icon" aria-hidden="true">!</span>
                 Cancellation policy
               </button>
               <button type="button" data-prompt="I need to speak with a person." disabled>
+                <span class="quick-actions__icon" aria-hidden="true">?</span>
                 Speak with a person
               </button>
             </div>
@@ -250,11 +266,64 @@
             </form>
           </div>
         </section>
+
+        <aside class="insight-panel" aria-labelledby="insight-title">
+          <section class="insight-card insight-card--profile">
+            <div class="insight-card__header">
+              <p class="eyebrow">Business profile</p>
+              <span class="signal-chip signal-chip--compact">
+                <span class="status-dot" aria-hidden="true"></span>
+                <span data-rail-profile-state>Setup</span>
+              </span>
+            </div>
+            <h2 id="insight-title" data-rail-business>Not selected</h2>
+            <p data-rail-profile-type>Choose a demo profile</p>
+          </section>
+
+          <section class="insight-card">
+            <h3>Conversation state</h3>
+            <dl class="insight-list">
+              <div>
+                <dt>Intent</dt>
+                <dd data-rail-intent>Not identified</dd>
+              </div>
+              <div>
+                <dt>Channel</dt>
+                <dd data-rail-channel>Text</dd>
+              </div>
+              <div>
+                <dt>Next step</dt>
+                <dd data-rail-validation>Select a profile to begin.</dd>
+              </div>
+            </dl>
+          </section>
+
+          <section class="insight-card">
+            <h3>Appointment capture</h3>
+            <dl class="insight-list">
+              <div>
+                <dt>Service</dt>
+                <dd data-rail-service>Not selected</dd>
+              </div>
+              <div>
+                <dt>Appointment</dt>
+                <dd data-rail-appointment>No details</dd>
+              </div>
+            </dl>
+          </section>
+
+          <section class="insight-card">
+            <h3>Service menu</h3>
+            <ul class="service-list" data-rail-services>
+              <li>Select a business type</li>
+            </ul>
+          </section>
+        </aside>
       </main>
     </div>
 
     <p class="visually-hidden" role="status" aria-live="polite" data-announcement></p>
 
-    <script src="app.js"></script>
+    <script src="app.js?v=20260717-progress-1"></script>
   </body>
 </html>
