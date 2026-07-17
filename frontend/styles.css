@@ -62,6 +62,7 @@ button {
 }
 
 button:focus-visible,
+.button:focus-visible,
 input:focus-visible,
 select:focus-visible,
 textarea:focus-visible,
@@ -228,6 +229,8 @@ textarea:focus-visible,
   font-size: 14px;
   font-weight: 760;
   line-height: 1.1;
+  text-decoration: none;
+  white-space: nowrap;
   cursor: pointer;
   transition:
     background-color 160ms ease,
@@ -245,6 +248,10 @@ textarea:focus-visible,
 .button--secondary:hover {
   border-color: rgba(255, 255, 255, 0.36);
   background: rgba(255, 255, 255, 0.12);
+}
+
+.button-label-short {
+  display: none;
 }
 
 .button--primary {
@@ -1278,6 +1285,14 @@ textarea:focus-visible,
     min-height: 36px;
     padding-inline: 11px;
     font-size: 12px;
+  }
+
+  .button-label-full {
+    display: none;
+  }
+
+  .button-label-short {
+    display: inline;
   }
 
   .session-details {
